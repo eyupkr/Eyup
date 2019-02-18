@@ -1,0 +1,135 @@
+There is s problem in this column generation code. Is there anyone could solve the problem. 
+
+
+from gurobipy import *
+import numpy as np
+
+def solveCuttingStock(s, W):
+    w = []   # list of different widths (sizes) of items
+    d = []   # quantitiy of orders 
+    for item in sorted(s):
+        if w == [] or item != w[-1]:
+            w.append(item)
+            d.append(1)
+        else:
+            d[-1] += 1
+
+    a = []     # patterns
+    J = len(w) # j = 1, ..., J
+    
+    # generate initial patterns with one size for each item width
+    for j,width in enumerate(w):
+        pat = [0]*J
+        pat[j] = int(W/width)
+        a.append(pat)
+        
+    # Q2
+
+    I = len(a)
+    c = [] # waste
+
+    for i, width in enumerate(w):
+        waste = [0]*I
+        waste[i] = W - int(W/width)*width
+        c.append(waste)  
+    
+    iter = 0
+
+    master = Model("master LP")
+
+    x = {}
+    for i in range(I):
+        x[i] = master.addVar(name = "x")
+    
+    orders = {}
+    for j in range(J):
+        orders[j] = master.addConstr(quicksum(a[i][j]*x[i] for i in range(I)) >= d[j])
+
+    temp_sum = LinExpr()
+    for i in range(I):
+        temp_sum.add(c[i][i]*x[i])
+    master.setObjective(temp_sum, GRB.MINIMIZE)
+
+    master.optimize()
+    objective_value = master.getObjective().getValue()
+
+    for i in range(I):
+        print(f'The optimal value of x[{i}] is {x[i].x}')
+
+    print("The objective function value is", temp_sum.getValue())
+
+    while True:
+        #iter += 1
+        relax = master.relax()   # LP relaxation
+        relax.optimize()
+        
+        pi = [c.Pi for c in relax.getConstrs()] # keep dual variables
+        knapsack = Model("KP")   # sub-problem
+        knapsack.ModelSense=-1   # maximize
+        
+        y = {} # decision variable of the sub-problem
+        for j in range(J):
+            y[j] = knapsack.addVar(obj = w[j] + pi[j], vtype = "I")
+        knapsack.update()
+
+        # Constraint of the sub-problem
+        knapsack.addConstr(quicksum(w[j]*y[j] for j in range(J)) <= W)       
+        knapsack.update()  
+        knapsack.optimize()
+        
+        if True:
+            print ("objective of knapsack problem:", knapsack.ObjVal)
+        if (knapsack.ObjVal <= W): # break if no more columns
+            break
+
+        # computing new pattern
+        pat = [int(y[j].X+0.5) for j in y]
+        a.append(pat)
+        
+        # computing waste for the new pattern
+        
+        aa = np.multiply(pat, w)
+        bb = sum(aa)
+        newwaste = [0]*(I+1)
+        newwaste[i+1] = int(W - bb)
+        c.append(newwaste)
+        
+        if True:
+            print ("shadow prices and new pattern:")
+            for j,d in enumerate(pi):
+                print ("\t%5d%12g%7d" % (j+1,d,pat[j]))
+                
+        # add new column to the master problem
+        col = Column()
+        for j in range(J):
+            if a[I][j] > 0:
+                col.addTerms(a[I][j], orders[j])
+        x[I] = master.addVar(obj=+1, column = col) 
+        
+        master.update()
+        I += 1
+
+    master.optimize()
+    
+    if True: 
+        print ("final solution (integer master problem):  objective =", master.ObjVal)
+        print ('total waste= ', c)
+# Our example
+def CuttingStockExample():
+    W = 1300                                # roll capacity
+    w = [150, 200, 215, 320, 390, 395, 544] # width of orders
+    d = [30, 50, 10, 50, 80, 110, 45]       # demand
+    s = []                                  # list with item width
+    for l in range(len(w)):
+        for j in range(d[l]):
+            s.append(w[l])
+    return s,W
+
+
+if __name__ == "__main__":
+    s,W = CuttingStockExample()
+    
+    print ("\n\n\nCutting stock problem:")
+    solve = solveCuttingStock(s,W)
+    print (solve)
+    
